@@ -281,33 +281,84 @@ class SyncApp:
             key = os.getenv('WOO_API_KEY', '')
             secret = os.getenv('WOO_API_SECRET', '')
             
-            # Fetch product from WooCommerce API
+            # Fetch product data from WooCommerce
             response = requests.get(
                 f"{url}/wp-json/wc/v3/products/{woo_id}",
                 auth=(key, secret)
             )
             
             if response.status_code == 200:
+                # Update local database with fetched data
                 product_data = response.json()
-                # Update product in database
                 self.db.add_or_update_product(product_data)
+                self.status_label.config(text=f"Product {woo_id} synced from WooCommerce successfully", foreground="green")
+                
+                # Refresh the product list
+                self.update_product_list()
+                
+                # Restore the selection
+                if selected_items:
+                    for item in self.tree.get_children():
+                        if self.tree.item(item)['values'][0] == woo_id:
+                            self.tree.selection_set(item)
+                            self.tree.see(item)
+                            break
+            else:
+                self.status_label.config(text=f"Failed to fetch product {woo_id}: {response.status_code}", foreground="red")
+        except Exception as e:
+            self.status_label.config(text=f"Error syncing product: {str(e)}", foreground="red")
+            print(f"Error syncing product: {str(e)}")
+
+    def sync_to_woocommerce(self, woo_id):
+        try:
+            # Store the selected item before updating
+            selected_items = self.tree.selection()
+            
+            # Get the product data from the database
+            product = self.db.get_product_by_id(woo_id)
+            if not product:
+                self.status_label.config(text=f"Product {woo_id} not found in database", foreground="red")
+                return
+            
+            # Load API credentials
+            load_dotenv(override=True)
+            url = os.getenv('WOO_API_URL', '').rstrip('/')
+            key = os.getenv('WOO_API_KEY', '')
+            secret = os.getenv('WOO_API_SECRET', '')
+            
+            # Prepare the data to update
+            update_data = {
+                'regular_price': str(product.regular_price) if product.regular_price is not None else '',
+                'sale_price': str(product.sale_price) if product.sale_price is not None else '',
+                'stock_quantity': product.stock_quantity
+            }
+            
+            # Update product in WooCommerce
+            response = requests.put(
+                f"{url}/wp-json/wc/v3/products/{woo_id}",
+                auth=(key, secret),
+                json=update_data
+            )
+            
+            if response.status_code == 200:
+                self.status_label.config(text=f"Product {woo_id} updated in WooCommerce successfully", foreground="green")
+                # Update last_synced timestamp in database
+                self.db.update_product_sync_time(woo_id)
                 # Refresh the product list
                 self.update_product_list()
                 # Restore the selection
                 if selected_items:
-                    # Find the item with the same woo_id
                     for item in self.tree.get_children():
                         if self.tree.item(item)['values'][0] == woo_id:
                             self.tree.selection_set(item)
-                            self.tree.see(item)  # Ensure the selected item is visible
+                            self.tree.see(item)
                             break
-                self.status_label.config(text=f"Product {woo_id} synced successfully", foreground="green")
             else:
-                self.status_label.config(text=f"Failed to sync product {woo_id}: {response.status_code}", foreground="red")
+                self.status_label.config(text=f"Failed to update product {woo_id}: {response.status_code}", foreground="red")
         except Exception as e:
-            self.status_label.config(text=f"Error syncing product: {str(e)}", foreground="red")
+            self.status_label.config(text=f"Error updating product: {str(e)}", foreground="red")
             print(f"Error syncing product: {str(e)}")
-    
+
     def show_context_menu(self, event):
         print(f"\nRight-click event detected at coordinates: ({event.x}, {event.y})")
         region = self.tree.identify('region', event.x, event.y)
@@ -341,6 +392,10 @@ class SyncApp:
                     if column == '#2' and product_id != 'N/A':  # Name column
                         menu.add_command(label="Sync from WooCommerce",
                                        command=lambda pid=product_id: self.sync_product(pid))
+                        # Add new Sync To WooCommerce option with red color
+                        menu.add_command(label="Sync To WooCommerce",
+                                       command=lambda pid=product_id: self.sync_to_woocommerce(pid),
+                                       foreground="red")
                     
                     # Show menu at event coordinates if it has commands
                     if menu.index('end') is not None:

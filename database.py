@@ -169,12 +169,34 @@ class DatabaseManager:
         finally:
             session.close()
     
+    def get_product_by_id(self, woo_id):
+        session = self.get_session()
+        try:
+            return session.query(Product).filter_by(woo_id=woo_id).first()
+        finally:
+            session.close()
+    
     def update_product_field(self, product_id, field_name, value):
         session = self.get_session()
         try:
             product = session.query(Product).filter_by(woo_id=product_id).first()
             if product:
                 setattr(product, field_name, value)
+                product.last_synced = datetime.now()
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+    
+    def update_product_sync_time(self, woo_id):
+        session = self.get_session()
+        try:
+            product = session.query(Product).filter_by(woo_id=woo_id).first()
+            if product:
                 product.last_synced = datetime.now()
                 session.commit()
                 return True
